@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>CarQueue - Jukebox & Radio System</title>
+    <title>CarQueue - Jukebox & Auto-Radio System</title>
     
     <!-- Dependencies -->
     <script src="https://cdn.tailwindcss.com"></script>
@@ -57,7 +57,8 @@
             <div class="flex justify-between items-start">
                 <div>
                     <h2 class="text-brand-500 font-bold tracking-widest uppercase text-sm mb-1 flex items-center gap-2">
-                        Now Playing <span id="radio-badge" class="hidden bg-brand-600/30 text-brand-400 text-[10px] px-2 py-0.5 rounded-full border border-brand-500/30">Auto Radio Mix</span>
+                        Now Playing 
+                        <span id="radio-badge" class="hidden bg-brand-600/30 text-brand-400 text-[10px] px-2 py-0.5 rounded-full border border-brand-500/30">Auto Radio Mix</span>
                     </h2>
                     <h1 class="text-4xl font-extrabold truncate w-[32rem]" id="host-title">Not Playing</h1>
                     <p class="text-gray-400 text-lg mt-1" id="host-artist">Waiting for tracks...</p>
@@ -112,7 +113,7 @@
                 <span class="bg-brand-600/20 text-brand-400 text-xs px-2.5 py-1 rounded-full font-semibold" id="queue-count">0 tracks</span>
             </div>
             <div class="flex-1 overflow-y-auto hide-scroll p-4 space-y-3" id="host-queue-list">
-                <div class="text-center text-gray-500 mt-10 text-sm italic">Queue is empty.<br>YouTube Radio Mix will play automatically when finished.</div>
+                <div class="text-center text-gray-500 mt-10 text-sm italic">Queue is empty.<br>YouTube Auto Radio will trigger automatically when current track ends.</div>
             </div>
         </div>
         
@@ -172,28 +173,58 @@
                 <ul class="list-disc pl-4 space-y-1.5">
                     <li>Copy any track link from YouTube or YouTube Music.</li>
                     <li>Tap <strong>Paste Clipboard</strong> and submit to push it directly to the car speakers.</li>
-                    <li>When guest queue items finish, YouTube <strong>Auto Radio Mix</strong> keeps related songs playing automatically.</li>
+                    <li>When guest queue items finish, <strong>Auto Radio Mix</strong> recommends related songs seamlessly.</li>
                 </ul>
             </div>
         </div>
     </div>
 
-    <!-- MAIN JAVASCRIPT -->
+    <!-- MAIN APPLICATION JAVASCRIPT -->
     <script>
-        // App State
+        // ==========================================
+        // APPLICATION STATE & RADIO CONFIG
+        // ==========================================
         let isHost = false;
         let roomId = new URLSearchParams(window.location.search).get('room');
         
         let peer = null;
-        let connections = [];     // Host: Connected guests
-        let hostConnection = null; // Guest: Connection to host
+        let connections = [];      // Host: Connected guests
+        let hostConnection = null;  // Guest: Connection to host
         
         let queue = [];
         let currentTrack = null;
         let isPlaying = false;
+        let playedHistory = new Set(); // Prevent Auto Radio loops
         
         let ytPlayer = null;
         let progressInterval = null;
+
+        // Public Mirrors for Client-Side Auto Radio Recommendations
+        const INVIDIOUS_ENDPOINTS = [
+            'https://inv.tux.pizza',
+            'https://invidious.nerdvpn.de',
+            'https://vid.puffyan.us'
+        ];
+
+        const PIPED_ENDPOINTS = [
+            'https://pipedapi.tokhmi.xyz',
+            'https://pipedapi.moomoo.me',
+            'https://api-piped.mha.fi'
+        ];
+
+        // Helper: Fetch with Timeout
+        async function fetchWithTimeout(url, options = {}, timeoutMs = 3500) {
+            const controller = new AbortController();
+            const id = setTimeout(() => controller.abort(), timeoutMs);
+            try {
+                const response = await fetch(url, { ...options, signal: controller.signal });
+                clearTimeout(id);
+                return response;
+            } catch (err) {
+                clearTimeout(id);
+                throw err;
+            }
+        }
 
         // Robust YouTube Video ID Parser
         function parseYouTubeVideoId(input) {
@@ -275,37 +306,26 @@
             });
         }
 
+        // PLAYER STATE CHANGE & AUTO-RADIO TRIGGER
         function onPlayerStateChange(event) {
             if (event.data === YT.PlayerState.PLAYING) {
                 isPlaying = true;
                 document.getElementById('btn-play-icon').classList.replace('fa-play', 'fa-pause');
                 startProgressSync();
-
-                // If YouTube Radio Mix auto-advanced to next track while queue is empty
-                const data = ytPlayer.getVideoData();
-                if (data && data.video_id) {
-                    if (!currentTrack || currentTrack.videoId !== data.video_id) {
-                        currentTrack = {
-                            videoId: data.video_id,
-                            title: data.title || `Track (${data.video_id})`,
-                            artist: data.author || 'YouTube Radio Mix',
-                            thumbnail: `https://img.youtube.com/vi/${data.video_id}/hqdefault.jpg`
-                        };
-                        updateHostUI();
-                    }
-                }
             } else {
                 isPlaying = false;
                 document.getElementById('btn-play-icon').classList.replace('fa-pause', 'fa-play');
                 clearInterval(progressInterval);
             }
 
-            // Track finished
+            // SONG ENDED LOGIC: Priority Guest Queue -> Auto Radio Fallback
             if (event.data === YT.PlayerState.ENDED) {
                 if (queue.length > 0) {
-                    playNext(); // Guest item priority
+                    playNext(); // Guest track available
+                } else if (currentTrack && currentTrack.videoId) {
+                    // Trigger client-side Auto Radio for current video
+                    fetchAutoRadioTrack(currentTrack.videoId);
                 }
-                // If queue is empty, YouTube player natively plays next video in RD playlist
             }
             broadcastState();
         }
@@ -322,9 +342,9 @@
             }
         }
 
+        // STANDARD PLAY NEXT TRACK
         function playNext() {
             if (queue.length === 0) {
-                // If no guest songs remain, let current track or Radio continue
                 if (!currentTrack) {
                     updateHostUI();
                     broadcastState();
@@ -333,16 +353,90 @@
             }
             
             currentTrack = queue.shift();
+            playedHistory.add(currentTrack.videoId);
+            if (playedHistory.size > 30) playedHistory.clear();
             
-            // Load track and seed YouTube Radio Mix (list=RD+videoId)
-            ytPlayer.loadVideoById({
-                videoId: currentTrack.videoId,
-                list: 'RD' + currentTrack.videoId
-            });
+            // Standard loadVideoById without broken RD list
+            ytPlayer.loadVideoById(currentTrack.videoId);
             
             updateHostUI();
             renderHostQueue();
             broadcastState();
+        }
+
+        // CLIENT-SIDE AUTO RADIO RECOMMENDATION ENGINE
+        async function fetchAutoRadioTrack(lastVideoId) {
+            if (lastVideoId) playedHistory.add(lastVideoId);
+            let nextTrack = null;
+
+            // Tier 1: Invidious API Video Details (recommendedVideos)
+            for (const endpoint of INVIDIOUS_ENDPOINTS) {
+                try {
+                    const res = await fetchWithTimeout(`${endpoint}/api/v1/videos/${lastVideoId}`, {}, 3500);
+                    if (!res.ok) continue;
+                    const data = await res.json();
+                    
+                    if (data && data.recommendedVideos && Array.isArray(data.recommendedVideos)) {
+                        const candidate = data.recommendedVideos.find(v => v.videoId && !playedHistory.has(v.videoId)) || data.recommendedVideos[0];
+                        if (candidate && candidate.videoId) {
+                            nextTrack = {
+                                videoId: candidate.videoId,
+                                title: candidate.title || `Radio Track (${candidate.videoId})`,
+                                artist: candidate.author || 'YouTube Auto Radio',
+                                thumbnail: `https://img.youtube.com/vi/${candidate.videoId}/hqdefault.jpg`
+                            };
+                            break;
+                        }
+                    }
+                } catch (err) {
+                    console.warn(`Auto Radio Invidious mirror failed (${endpoint}):`, err.message);
+                }
+            }
+
+            // Tier 2: Piped API Streams Fallback (relatedStreams)
+            if (!nextTrack) {
+                for (const endpoint of PIPED_ENDPOINTS) {
+                    try {
+                        const res = await fetchWithTimeout(`${endpoint}/streams/${lastVideoId}`, {}, 3500);
+                        if (!res.ok) continue;
+                        const data = await res.json();
+                        
+                        if (data && data.relatedStreams && Array.isArray(data.relatedStreams)) {
+                            const candidate = data.relatedStreams.find(s => {
+                                const vId = s.url ? s.url.replace('/watch?v=', '') : '';
+                                return vId && !playedHistory.has(vId);
+                            }) || data.relatedStreams[0];
+
+                            if (candidate) {
+                                const vId = candidate.url ? candidate.url.replace('/watch?v=', '') : '';
+                                if (vId) {
+                                    nextTrack = {
+                                        videoId: vId,
+                                        title: candidate.title || `Radio Track (${vId})`,
+                                        artist: candidate.uploaderName || 'YouTube Auto Radio',
+                                        thumbnail: candidate.thumbnail || `https://img.youtube.com/vi/${vId}/hqdefault.jpg`
+                                    };
+                                    break;
+                                }
+                            }
+                        }
+                    } catch (err) {
+                        console.warn(`Auto Radio Piped mirror failed (${endpoint}):`, err.message);
+                    }
+                }
+            }
+
+            // Execute Radio Next Track
+            if (nextTrack) {
+                currentTrack = nextTrack;
+                playedHistory.add(nextTrack.videoId);
+                
+                ytPlayer.loadVideoById(currentTrack.videoId);
+                updateHostUI();
+                broadcastState();
+            } else {
+                console.warn('Auto Radio engine could not retrieve related tracks.');
+            }
         }
 
         function togglePlay() {
@@ -370,7 +464,7 @@
                 artistEl.innerText = currentTrack.artist;
                 thumbEl.src = `https://img.youtube.com/vi/${currentTrack.videoId}/hqdefault.jpg`;
                 
-                if (queue.length === 0 && currentTrack.artist === 'YouTube Radio Mix') {
+                if (currentTrack.artist === 'YouTube Auto Radio') {
                     radioBadge.classList.remove('hidden');
                 } else {
                     radioBadge.classList.add('hidden');
@@ -391,7 +485,7 @@
             document.getElementById('queue-count').innerText = `${queue.length} tracks`;
             
             if (queue.length === 0) {
-                list.innerHTML = '<div class="text-center text-gray-500 mt-10 text-sm italic">Queue is empty.<br>YouTube Radio Mix will play automatically when finished.</div>';
+                list.innerHTML = '<div class="text-center text-gray-500 mt-10 text-sm italic">Queue is empty.<br>YouTube Auto Radio will trigger automatically when current track ends.</div>';
                 return;
             }
             
