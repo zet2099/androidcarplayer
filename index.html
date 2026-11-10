@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>CarQueue - Real-time Jukebox</title>
+    <title>CarQueue - Jukebox & Radio System</title>
     
     <!-- Dependencies -->
     <script src="https://cdn.tailwindcss.com"></script>
@@ -30,17 +30,15 @@
         .glass-panel { background: rgba(31, 41, 55, 0.7); backdrop-filter: blur(12px); border: 1px solid rgba(255,255,255,0.1); }
         .hide-scroll::-webkit-scrollbar { display: none; }
         .hide-scroll { -ms-overflow-style: none; scrollbar-width: none; }
-        /* Hidden YT Player for Host CPU/RAM optimization */
+        /* Hidden YT Player for Host optimization */
         #yt-player-container { position: absolute; top: -9999px; left: -9999px; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
         @keyframes pulse-slow { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
         .blink { animation: pulse-slow 2s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
-        @keyframes bounce-once { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-8px); } }
-        .animate-bounce-once { animation: bounce-once 0.4s ease-out 1; }
     </style>
 </head>
 <body class="h-screen w-screen flex flex-col">
 
-    <!-- INITIALIZATION OVERLAY (Bypasses browser autoplay restrictions) -->
+    <!-- INITIALIZATION OVERLAY (Satisfies browser autoplay rules) -->
     <div id="init-overlay" class="fixed inset-0 z-50 flex items-center justify-center bg-gray-950">
         <div class="text-center p-8 glass-panel rounded-2xl max-w-sm w-full mx-4 shadow-2xl">
             <i class="fa-solid fa-car-side text-6xl text-brand-500 mb-4"></i>
@@ -58,7 +56,9 @@
         <div class="flex-1 flex flex-col p-8 relative">
             <div class="flex justify-between items-start">
                 <div>
-                    <h2 class="text-brand-500 font-bold tracking-widest uppercase text-sm mb-1">Now Playing</h2>
+                    <h2 class="text-brand-500 font-bold tracking-widest uppercase text-sm mb-1 flex items-center gap-2">
+                        Now Playing <span id="radio-badge" class="hidden bg-brand-600/30 text-brand-400 text-[10px] px-2 py-0.5 rounded-full border border-brand-500/30">Auto Radio Mix</span>
+                    </h2>
                     <h1 class="text-4xl font-extrabold truncate w-[32rem]" id="host-title">Not Playing</h1>
                     <p class="text-gray-400 text-lg mt-1" id="host-artist">Waiting for tracks...</p>
                 </div>
@@ -75,7 +75,8 @@
             <!-- Album Art Large -->
             <div class="flex-1 flex items-center justify-center py-8">
                 <img id="host-thumbnail" src="https://via.placeholder.com/600x600/1f2937/4b5563?text=CarQueue" 
-                     class="w-80 h-80 object-cover rounded-3xl shadow-2xl shadow-brand-500/20 border border-gray-800 transition-all duration-500">
+                     class="w-80 h-80 object-cover rounded-3xl shadow-2xl shadow-brand-500/20 border border-gray-800 transition-all duration-500"
+                     onerror="this.src='https://via.placeholder.com/600x600/1f2937/4b5563?text=CarQueue'">
             </div>
 
             <!-- Controls & Progress -->
@@ -89,7 +90,7 @@
                     <span id="time-total">0:00</span>
                 </div>
                 
-                <!-- Player Control Buttons -->
+                <!-- Controls Buttons -->
                 <div class="flex items-center justify-center gap-8">
                     <button class="text-gray-400 hover:text-white transition" onclick="clearQueue()" title="Clear Queue">
                         <i class="fa-solid fa-trash text-xl"></i>
@@ -97,7 +98,7 @@
                     <button class="text-3xl text-gray-300 hover:text-white transition" onclick="togglePlay()">
                         <i class="fa-solid fa-play" id="btn-play-icon"></i>
                     </button>
-                    <button class="text-3xl text-gray-300 hover:text-white transition" onclick="playNext()">
+                    <button class="text-3xl text-gray-300 hover:text-white transition" onclick="playNext()" title="Skip Track">
                         <i class="fa-solid fa-forward-step"></i>
                     </button>
                 </div>
@@ -111,11 +112,11 @@
                 <span class="bg-brand-600/20 text-brand-400 text-xs px-2.5 py-1 rounded-full font-semibold" id="queue-count">0 tracks</span>
             </div>
             <div class="flex-1 overflow-y-auto hide-scroll p-4 space-y-3" id="host-queue-list">
-                <div class="text-center text-gray-500 mt-10 text-sm italic">Queue is empty</div>
+                <div class="text-center text-gray-500 mt-10 text-sm italic">Queue is empty.<br>YouTube Radio Mix will play automatically when finished.</div>
             </div>
         </div>
         
-        <!-- Hidden YT Player -->
+        <!-- Hidden YT Player Container (1x1 pixel for audio-only optimization) -->
         <div id="yt-player-container"><div id="yt-player"></div></div>
     </div>
 
@@ -131,7 +132,7 @@
 
         <!-- Now Playing Sticky Header -->
         <div class="glass-panel p-4 flex items-center gap-4 z-10 sticky top-0 shadow-lg border-b border-gray-800">
-            <img id="guest-np-thumb" src="https://via.placeholder.com/100" class="w-14 h-14 rounded-lg object-cover bg-gray-800">
+            <img id="guest-np-thumb" src="https://via.placeholder.com/100" class="w-14 h-14 rounded-lg object-cover bg-gray-800" onerror="this.src='https://via.placeholder.com/100'">
             <div class="flex-1 min-w-0">
                 <p class="text-xs text-brand-400 font-bold uppercase tracking-wider mb-0.5">Now Playing</p>
                 <p class="font-bold truncate text-sm" id="guest-np-title">Nothing playing</p>
@@ -139,71 +140,47 @@
             </div>
         </div>
 
-        <!-- Search & Clipboard Toolbar -->
-        <div class="p-4 flex-shrink-0 space-y-3">
-            <div class="flex items-center gap-2">
-                <div class="flex-1 flex bg-gray-900 p-1 rounded-xl border border-gray-800 text-xs font-semibold">
-                    <button type="button" id="tab-search-btn" onclick="switchGuestSearchTab('search')" class="flex-1 py-2 rounded-lg bg-brand-600 text-white transition">
-                        <i class="fa-solid fa-magnifying-glass mr-1"></i> Search
-                    </button>
-                    <button type="button" id="tab-link-btn" onclick="switchGuestSearchTab('link')" class="flex-1 py-2 rounded-lg text-gray-400 hover:text-white transition">
-                        <i class="fa-solid fa-link mr-1"></i> Paste Link
-                    </button>
-                </div>
-                <!-- Manual Clipboard Paste Button -->
-                <button type="button" onclick="checkClipboardForYouTubeLink(true)" 
-                        title="Paste from Clipboard"
-                        class="bg-gray-900 hover:bg-gray-800 border border-gray-700 text-brand-400 p-2.5 rounded-xl transition flex items-center justify-center">
-                    <i class="fa-solid fa-paste text-sm"></i>
+        <!-- Link Input Form Area -->
+        <div class="p-6 flex-shrink-0 space-y-4">
+            <div class="flex items-center justify-between">
+                <label class="text-xs font-bold text-gray-400 uppercase tracking-wider">Add YouTube Track</label>
+                <button type="button" onclick="pasteFromClipboard()" class="text-xs text-brand-400 hover:text-brand-300 font-semibold flex items-center gap-1.5 transition">
+                    <i class="fa-solid fa-paste"></i> Paste Clipboard
                 </button>
             </div>
 
-            <!-- Search Form -->
-            <form id="search-form" class="relative">
-                <i id="search-icon" class="fa-solid fa-magnifying-glass absolute left-4 top-3.5 text-gray-500"></i>
-                <input type="text" id="search-input" placeholder="Search song or artist..." 
-                       class="w-full bg-gray-900 border border-gray-700 text-white text-sm rounded-xl focus:ring-2 focus:ring-brand-500 focus:border-brand-500 block pl-10 pr-12 p-3 transition" required>
-                <button type="submit" class="absolute right-2 top-2 bg-brand-600 hover:bg-brand-500 p-2 rounded-lg text-white transition">
-                    <i class="fa-solid fa-arrow-right"></i>
+            <form id="link-form" class="space-y-3">
+                <div class="relative">
+                    <i class="fa-solid fa-link absolute left-4 top-3.5 text-gray-500"></i>
+                    <input type="text" id="guest-link-input" placeholder="Paste YouTube link (watch, short, music)..." 
+                           class="w-full bg-gray-900 border border-gray-700 text-white text-sm rounded-xl focus:ring-2 focus:ring-brand-500 focus:border-brand-500 block pl-10 pr-4 p-3 transition" required>
+                </div>
+                <button type="submit" class="w-full bg-brand-600 hover:bg-brand-500 text-white font-bold py-3.5 px-4 rounded-xl transition shadow-lg shadow-brand-500/25 flex items-center justify-center gap-2">
+                    <i class="fa-solid fa-plus"></i> Add Track to Car Queue
                 </button>
             </form>
+
+            <div id="guest-status-msg" class="hidden text-xs p-3 rounded-xl text-center transition"></div>
         </div>
 
-        <!-- Floating Auto-Clipboard Toast Notification -->
-        <div id="clipboard-toast" class="hidden fixed bottom-6 left-4 right-4 z-50 glass-panel p-4 rounded-2xl border border-brand-500/50 shadow-2xl flex items-center justify-between gap-3 animate-bounce-once">
-            <div class="flex items-center gap-3 min-w-0">
-                <div class="bg-brand-600/20 text-brand-400 p-2.5 rounded-xl">
-                    <i class="fa-brands fa-youtube text-xl"></i>
-                </div>
-                <div class="min-w-0">
-                    <p class="text-xs text-brand-400 font-bold uppercase tracking-wider">YouTube Link Detected</p>
-                    <p class="text-xs text-white truncate font-mono" id="toast-track-title">...</p>
-                </div>
-            </div>
-            <div class="flex items-center gap-2 flex-shrink-0">
-                <button id="toast-add-btn" class="bg-brand-600 hover:bg-brand-500 text-white text-xs font-bold px-3 py-2 rounded-lg transition shadow-md">
-                    Add to Queue
-                </button>
-                <button onclick="dismissClipboardToast()" class="text-gray-400 hover:text-white px-2 py-1 text-sm">
-                    <i class="fa-solid fa-xmark"></i>
-                </button>
-            </div>
-        </div>
-
-        <!-- Search Results List -->
-        <div class="flex-1 overflow-y-auto p-4 space-y-4 pb-24 hide-scroll" id="guest-search-results">
-            <div class="text-center text-gray-500 mt-10 text-sm">
-                <i class="fa-brands fa-youtube text-4xl mb-3 text-gray-700"></i><br>
-                Search for a track or paste a YouTube link to queue.
+        <!-- Instructions / Recent Activity -->
+        <div class="flex-1 overflow-y-auto p-6 space-y-4 hide-scroll">
+            <div class="p-4 bg-gray-900/60 border border-gray-800 rounded-2xl space-y-3 text-xs text-gray-400">
+                <p class="font-bold text-white text-sm flex items-center gap-2">
+                    <i class="fa-solid fa-circle-info text-brand-500"></i> How it works
+                </p>
+                <ul class="list-disc pl-4 space-y-1.5">
+                    <li>Copy any track link from YouTube or YouTube Music.</li>
+                    <li>Tap <strong>Paste Clipboard</strong> and submit to push it directly to the car speakers.</li>
+                    <li>When guest queue items finish, YouTube <strong>Auto Radio Mix</strong> keeps related songs playing automatically.</li>
+                </ul>
             </div>
         </div>
     </div>
 
-    <!-- MAIN APPLICATION JAVASCRIPT -->
+    <!-- MAIN JAVASCRIPT -->
     <script>
-        // ==========================================
-        // APPLICATION STATE & FALLBACK CONFIG
-        // ==========================================
+        // App State
         let isHost = false;
         let roomId = new URLSearchParams(window.location.search).get('room');
         
@@ -217,70 +194,15 @@
         
         let ytPlayer = null;
         let progressInterval = null;
-        let currentSearchMode = 'search';
-        let lastDetectedClipboardId = null;
 
-        // Tier 1: Piped JSON API Instances
-        const PIPED_INSTANCES = [
-            'https://pipedapi.tokhmi.xyz',
-            'https://pipedapi.moomoo.me',
-            'https://api-piped.mha.fi',
-            'https://pipedapi.syncpundit.io',
-            'https://pipedapi.kavin.rocks'
-        ];
-
-        // Tier 2: Invidious JSON API Instances
-        const INVIDIOUS_INSTANCES = [
-            'https://inv.tux.pizza',
-            'https://invidious.nerdvpn.de',
-            'https://vid.puffyan.us'
-        ];
-
-        // Tier 3: Invidious Web HTML Mirrors (Scraping via DOMParser)
-        const INVIDIOUS_WEB_MIRRORS = [
-            'https://inv.tux.pizza',
-            'https://invidious.nerdvpn.de',
-            'https://vid.puffyan.us',
-            'https://invidious.drgns.space'
-        ];
-
-        // Helper: Fetch with Timeout
-        async function fetchWithTimeout(url, options = {}, timeoutMs = 3500) {
-            const controller = new AbortController();
-            const id = setTimeout(() => controller.abort(), timeoutMs);
-            try {
-                const response = await fetch(url, { ...options, signal: controller.signal });
-                clearTimeout(id);
-                return response;
-            } catch (err) {
-                clearTimeout(id);
-                throw err;
-            }
-        }
-
-        // Helper: HTML Sanitization
-        function escapeHtml(str) {
-            if (!str) return '';
-            return str
-                .replace(/&/g, "&amp;")
-                .replace(/</g, "&lt;")
-                .replace(/>/g, "&gt;")
-                .replace(/"/g, "&quot;")
-                .replace(/'/g, "&#039;");
-        }
-
-        // Extract 11-character YouTube Video ID from standard YouTube URLs
+        // Robust YouTube Video ID Parser
         function parseYouTubeVideoId(input) {
             if (!input) return null;
-            const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|\&v=)([^#\&\?]*).*/;
-            const match = input.trim().match(regExp);
-            if (match && match[2].length === 11) {
-                return match[2];
-            }
-            if (/^[a-zA-Z0-9_-]{11}$/.test(input.trim())) {
-                return input.trim();
-            }
-            return null;
+            const str = input.trim();
+            if (/^[a-zA-Z0-9_-]{11}$/.test(str)) return str;
+            const regExp = /^.*(?:youtu\.be\/|v\/|u\/\w\/|embed\/|watch\?v=|&v=|music\.youtube\.com\/watch\?v=)([^#&?]*).*/;
+            const match = str.match(regExp);
+            return (match && match[1].length === 11) ? match[1] : null;
         }
 
         // --- INITIALIZATION ---
@@ -291,15 +213,15 @@
 
             if (isHost) {
                 roomId = Math.random().toString(36).substring(2, 7).toUpperCase();
-                initStatus.innerText = "Ready to start Host environment.";
+                initStatus.innerText = "Ready to start Host Car Unit.";
                 startBtn.classList.remove('hidden');
                 startBtn.onclick = () => {
                     document.getElementById('init-overlay').classList.add('hidden');
                     initHost();
                 };
             } else {
-                initStatus.innerText = "Connecting to Car Queue...";
-                startBtn.innerText = "Join Queue";
+                initStatus.innerText = "Connecting to Car System...";
+                startBtn.innerText = "Join Car Queue";
                 startBtn.classList.remove('hidden');
                 startBtn.onclick = () => {
                     document.getElementById('init-overlay').classList.add('hidden');
@@ -313,7 +235,7 @@
             document.getElementById('host-view').classList.remove('hidden');
             document.getElementById('host-room-id-display').innerText = roomId;
             
-            // Generate Connection QR Code
+            // Generate Mini QR Code
             const joinUrl = `${window.location.origin}${window.location.pathname}?room=${roomId}`;
             new QRCode(document.getElementById("host-mini-qr"), {
                 text: joinUrl,
@@ -342,20 +264,15 @@
             firstScriptTag.parentNode.insertBefore(tag, firstScriptTag);
         }
 
-        // Global callback required by YouTube IFrame API
         function onYouTubeIframeAPIReady() {
             ytPlayer = new YT.Player('yt-player', {
-                height: '1', width: '1', // 1x1 pixels to save system RAM/CPU
-                playerVars: { 'autoplay': 0, 'controls': 0, 'disablekb': 1, 'fs': 0, 'playsinline': 1 },
+                height: '1', width: '1',
+                playerVars: { 'autoplay': 1, 'controls': 0, 'disablekb': 1, 'fs': 0, 'playsinline': 1 },
                 events: {
-                    'onReady': onPlayerReady,
+                    'onReady': () => console.log("Host YT Player Ready"),
                     'onStateChange': onPlayerStateChange
                 }
             });
-        }
-
-        function onPlayerReady(event) {
-            console.log("YouTube Player Ready");
         }
 
         function onPlayerStateChange(event) {
@@ -363,14 +280,32 @@
                 isPlaying = true;
                 document.getElementById('btn-play-icon').classList.replace('fa-play', 'fa-pause');
                 startProgressSync();
+
+                // If YouTube Radio Mix auto-advanced to next track while queue is empty
+                const data = ytPlayer.getVideoData();
+                if (data && data.video_id) {
+                    if (!currentTrack || currentTrack.videoId !== data.video_id) {
+                        currentTrack = {
+                            videoId: data.video_id,
+                            title: data.title || `Track (${data.video_id})`,
+                            artist: data.author || 'YouTube Radio Mix',
+                            thumbnail: `https://img.youtube.com/vi/${data.video_id}/hqdefault.jpg`
+                        };
+                        updateHostUI();
+                    }
+                }
             } else {
                 isPlaying = false;
                 document.getElementById('btn-play-icon').classList.replace('fa-pause', 'fa-play');
                 clearInterval(progressInterval);
             }
 
+            // Track finished
             if (event.data === YT.PlayerState.ENDED) {
-                playNext();
+                if (queue.length > 0) {
+                    playNext(); // Guest item priority
+                }
+                // If queue is empty, YouTube player natively plays next video in RD playlist
             }
             broadcastState();
         }
@@ -378,22 +313,33 @@
         function handleHostData(data, conn) {
             if (data.type === 'ADD_QUEUE') {
                 queue.push(data.track);
-                if (!currentTrack) playNext();
-                else broadcastState();
+                if (!currentTrack) {
+                    playNext();
+                } else {
+                    broadcastState();
+                }
                 renderHostQueue();
             }
         }
 
         function playNext() {
             if (queue.length === 0) {
-                currentTrack = null;
-                ytPlayer.stopVideo();
-                updateHostUI();
-                broadcastState();
+                // If no guest songs remain, let current track or Radio continue
+                if (!currentTrack) {
+                    updateHostUI();
+                    broadcastState();
+                }
                 return;
             }
+            
             currentTrack = queue.shift();
-            ytPlayer.loadVideoById(currentTrack.videoId);
+            
+            // Load track and seed YouTube Radio Mix (list=RD+videoId)
+            ytPlayer.loadVideoById({
+                videoId: currentTrack.videoId,
+                list: 'RD' + currentTrack.videoId
+            });
+            
             updateHostUI();
             renderHostQueue();
             broadcastState();
@@ -417,15 +363,23 @@
             const titleEl = document.getElementById('host-title');
             const artistEl = document.getElementById('host-artist');
             const thumbEl = document.getElementById('host-thumbnail');
+            const radioBadge = document.getElementById('radio-badge');
             
             if (currentTrack) {
                 titleEl.innerText = currentTrack.title;
                 artistEl.innerText = currentTrack.artist;
-                thumbEl.src = currentTrack.thumbnail.replace('hqdefault', 'maxresdefault');
+                thumbEl.src = `https://img.youtube.com/vi/${currentTrack.videoId}/hqdefault.jpg`;
+                
+                if (queue.length === 0 && currentTrack.artist === 'YouTube Radio Mix') {
+                    radioBadge.classList.remove('hidden');
+                } else {
+                    radioBadge.classList.add('hidden');
+                }
             } else {
                 titleEl.innerText = "Not Playing";
                 artistEl.innerText = "Queue is empty";
                 thumbEl.src = "https://via.placeholder.com/600x600/1f2937/4b5563?text=CarQueue";
+                radioBadge.classList.add('hidden');
                 document.getElementById('host-progress-bar').style.width = '0%';
                 document.getElementById('time-current').innerText = "0:00";
                 document.getElementById('time-total').innerText = "0:00";
@@ -437,14 +391,14 @@
             document.getElementById('queue-count').innerText = `${queue.length} tracks`;
             
             if (queue.length === 0) {
-                list.innerHTML = '<div class="text-center text-gray-500 mt-10 text-sm italic">Queue is empty</div>';
+                list.innerHTML = '<div class="text-center text-gray-500 mt-10 text-sm italic">Queue is empty.<br>YouTube Radio Mix will play automatically when finished.</div>';
                 return;
             }
             
             list.innerHTML = queue.map((track, i) => `
-                <div class="flex items-center gap-3 bg-gray-800/50 p-2 rounded-lg border border-gray-700/50">
+                <div class="flex items-center gap-3 bg-gray-800/50 p-2.5 rounded-xl border border-gray-700/50">
                     <div class="text-gray-500 text-xs font-mono w-4 text-center">${i + 1}</div>
-                    <img src="${track.thumbnail}" class="w-10 h-10 rounded object-cover">
+                    <img src="${track.thumbnail}" class="w-10 h-10 rounded-lg object-cover bg-gray-800" onerror="this.src='https://via.placeholder.com/100'">
                     <div class="flex-1 min-w-0">
                         <p class="text-sm font-bold truncate text-white">${escapeHtml(track.title)}</p>
                         <p class="text-xs text-gray-400 truncate">${escapeHtml(track.artist)}</p>
@@ -492,12 +446,11 @@
             
             peer = new Peer();
             
-            peer.on('open', (id) => {
+            peer.on('open', () => {
                 hostConnection = peer.connect(roomId);
                 
                 hostConnection.on('open', () => {
-                    console.log("Connected to Host!");
-                    checkClipboardForYouTubeLink(false); // Check clipboard on initial load
+                    console.log("Connected to Car Host!");
                 });
                 
                 hostConnection.on('data', (data) => {
@@ -506,15 +459,79 @@
                     }
                 });
 
-                hostConnection.on('close', () => alert("Disconnected from Car Queue."));
+                hostConnection.on('close', () => showGuestStatus("Disconnected from Car System.", "error"));
             });
             
-            document.getElementById('search-form').addEventListener('submit', async (e) => {
+            document.getElementById('link-form').addEventListener('submit', (e) => {
                 e.preventDefault();
-                const q = document.getElementById('search-input').value;
-                if (!q) return;
-                performSearch(q);
+                handleGuestLinkSubmit();
             });
+        }
+
+        async function pasteFromClipboard() {
+            try {
+                if (!navigator.clipboard || !navigator.clipboard.readText) {
+                    showGuestStatus("Clipboard access not supported by browser.", "error");
+                    return;
+                }
+                const text = await navigator.clipboard.readText();
+                if (text) {
+                    document.getElementById('guest-link-input').value = text;
+                    const videoId = parseYouTubeVideoId(text);
+                    if (videoId) {
+                        showGuestStatus("Valid YouTube link detected!", "success");
+                    } else {
+                        showGuestStatus("Pasted text. Please verify it's a valid link.", "info");
+                    }
+                }
+            } catch (err) {
+                showGuestStatus("Clipboard permission denied.", "error");
+            }
+        }
+
+        function handleGuestLinkSubmit() {
+            const input = document.getElementById('guest-link-input');
+            const videoId = parseYouTubeVideoId(input.value);
+
+            if (!videoId) {
+                showGuestStatus("Invalid YouTube URL. Please check your link.", "error");
+                return;
+            }
+
+            if (hostConnection && hostConnection.open) {
+                const trackPayload = {
+                    videoId: videoId,
+                    title: `Track (${videoId})`,
+                    artist: 'Guest Link',
+                    thumbnail: `https://img.youtube.com/vi/${videoId}/hqdefault.jpg`
+                };
+
+                hostConnection.send({
+                    type: 'ADD_QUEUE',
+                    track: trackPayload
+                });
+
+                input.value = "";
+                showGuestStatus("Track pushed to Car Queue!", "success");
+            } else {
+                showGuestStatus("Not connected to Car System.", "error");
+            }
+        }
+
+        function showGuestStatus(msg, type) {
+            const el = document.getElementById('guest-status-msg');
+            el.classList.remove('hidden', 'bg-emerald-500/20', 'text-emerald-400', 'bg-red-500/20', 'text-red-400', 'bg-gray-800', 'text-gray-300');
+            
+            if (type === 'success') {
+                el.classList.add('bg-emerald-500/20', 'text-emerald-400');
+            } else if (type === 'error') {
+                el.classList.add('bg-red-500/20', 'text-red-400');
+            } else {
+                el.classList.add('bg-gray-800', 'text-gray-300');
+            }
+
+            el.innerText = msg;
+            setTimeout(() => el.classList.add('hidden'), 3500);
         }
 
         function updateGuestNP(data) {
@@ -533,342 +550,10 @@
             }
         }
 
-        // Tab Selector Logic for Guest View
-        window.switchGuestSearchTab = function(mode) {
-            currentSearchMode = mode;
-            const input = document.getElementById('search-input');
-            const icon = document.getElementById('search-icon');
-            const searchBtn = document.getElementById('tab-search-btn');
-            const linkBtn = document.getElementById('tab-link-btn');
-
-            if (mode === 'link') {
-                searchBtn.className = "flex-1 py-2 rounded-lg text-gray-400 hover:text-white transition";
-                linkBtn.className = "flex-1 py-2 rounded-lg bg-brand-600 text-white transition";
-                input.placeholder = "Paste YouTube link (e.g. https://youtu.be/...)";
-                icon.className = "fa-solid fa-link absolute left-4 top-3.5 text-gray-500";
-            } else {
-                linkBtn.className = "flex-1 py-2 rounded-lg text-gray-400 hover:text-white transition";
-                searchBtn.className = "flex-1 py-2 rounded-lg bg-brand-600 text-white transition";
-                input.placeholder = "Search song or artist...";
-                icon.className = "fa-solid fa-magnifying-glass absolute left-4 top-3.5 text-gray-500";
-            }
-        };
-
-        // METHOD 1: HTML DOM Parsing via Invidious Web Mirrors
-        async function searchInvidiousHTML(query) {
-            const encodedQuery = encodeURIComponent(query);
-            
-            for (const mirror of INVIDIOUS_WEB_MIRRORS) {
-                try {
-                    const res = await fetchWithTimeout(`${mirror}/search?q=${encodedQuery}`, {}, 4000);
-                    if (!res.ok) continue;
-                    
-                    const htmlText = await res.text();
-                    const parser = new DOMParser();
-                    const doc = parser.parseFromString(htmlText, 'text/html');
-                    
-                    const cards = doc.querySelectorAll('.video-card-row, .pure-u-1-1.pure-u-md-1-4, .video-card');
-                    const results = [];
-                    const seenIds = new Set();
-
-                    cards.forEach(card => {
-                        const linkEl = card.querySelector('a[href*="/watch?v="]');
-                        if (!linkEl) return;
-
-                        const href = linkEl.getAttribute('href') || '';
-                        const videoIdMatch = href.match(/\/watch\?v=([a-zA-Z0-9_-]{11})/);
-                        if (!videoIdMatch) return;
-                        const videoId = videoIdMatch[1];
-
-                        if (seenIds.has(videoId)) return;
-                        seenIds.add(videoId);
-
-                        const titleEl = card.querySelector('p[dir="auto"], h5, .video-card-title, a[href*="/watch?v="] p');
-                        const title = titleEl ? titleEl.textContent.trim() : (linkEl.getAttribute('title') || `Track (${videoId})`);
-
-                        const channelEl = card.querySelector('a[href*="/channel/"], a[href*="/user/"], .channel-name');
-                        const artist = channelEl ? channelEl.textContent.trim() : 'YouTube Channel';
-
-                        const imgEl = card.querySelector('img');
-                        let thumbnail = `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`;
-                        if (imgEl && imgEl.getAttribute('src')) {
-                            const src = imgEl.getAttribute('src');
-                            if (src.startsWith('http')) thumbnail = src;
-                            else if (src.startsWith('/')) thumbnail = mirror + src;
-                        }
-
-                        results.push({ videoId, title, artist, thumbnail });
-                    });
-
-                    if (results.length > 0) return results;
-
-                } catch (err) {
-                    console.warn(`HTML DOM Scrape failed for ${mirror}:`, err.message);
-                }
-            }
-            return null;
+        function escapeHtml(str) {
+            if (!str) return '';
+            return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;");
         }
-
-        // METHOD 2: Auto-Clipboard Link Detection Logic
-        async function checkClipboardForYouTubeLink(manualTrigger = false) {
-            if (isHost || !navigator.clipboard || !navigator.clipboard.readText) {
-                if (manualTrigger) alert("Clipboard access is restricted or not supported by your browser.");
-                return;
-            }
-
-            try {
-                const text = await navigator.clipboard.readText();
-                const videoId = parseYouTubeVideoId(text);
-                
-                if (videoId && videoId !== lastDetectedClipboardId) {
-                    showClipboardToast(videoId, text);
-                } else if (manualTrigger && !videoId) {
-                    alert("No valid YouTube video URL found in clipboard.");
-                }
-            } catch (err) {
-                if (manualTrigger) {
-                    alert("Unable to read clipboard. Please grant permission when prompted.");
-                }
-            }
-        }
-
-        function showClipboardToast(videoId, fullUrl) {
-            lastDetectedClipboardId = videoId;
-            const toast = document.getElementById('clipboard-toast');
-            const toastTitle = document.getElementById('toast-track-title');
-            const confirmBtn = document.getElementById('toast-add-btn');
-
-            toastTitle.innerText = `Track ID: ${videoId}`;
-            toast.classList.remove('hidden');
-
-            confirmBtn.onclick = () => {
-                addToQueue(videoId, `Track (${videoId})`, "Clipboard Import", `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`);
-                toast.classList.add('hidden');
-            };
-        }
-
-        function dismissClipboardToast() {
-            document.getElementById('clipboard-toast').classList.add('hidden');
-        }
-
-        // Register Clipboard Listeners
-        document.addEventListener('visibilitychange', () => {
-            if (document.visibilityState === 'visible' && !isHost) {
-                checkClipboardForYouTubeLink(false);
-            }
-        });
-
-        window.addEventListener('focus', () => {
-            if (!isHost) {
-                checkClipboardForYouTubeLink(false);
-            }
-        });
-
-        // Tier 4: YouTube Auto-Suggest JSONP Fetch
-        function fetchYouTubeSuggestions(query) {
-            return new Promise((resolve) => {
-                const callbackName = 'yt_suggest_' + Math.random().toString(36).substring(2, 9);
-                const script = document.createElement('script');
-                
-                window[callbackName] = function(data) {
-                    delete window[callbackName];
-                    if (script.parentNode) script.parentNode.removeChild(script);
-                    resolve((data && data[1]) ? data[1].map(item => item[0] || item) : []);
-                };
-
-                script.src = `https://suggestqueries.google.com/complete/search?client=youtube&jsonp=${callbackName}&q=${encodeURIComponent(query)}`;
-                script.onerror = () => {
-                    delete window[callbackName];
-                    if (script.parentNode) script.parentNode.removeChild(script);
-                    resolve([]);
-                };
-                
-                document.body.appendChild(script);
-            });
-        }
-
-        // 4-TIER HYBRID SEARCH ENGINE EXECUTION
-        async function performSearch(query) {
-            const resultsContainer = document.getElementById('guest-search-results');
-            const cleanQuery = query.trim();
-
-            // Direct URL Paste Detection
-            const directVideoId = parseYouTubeVideoId(cleanQuery);
-            if (directVideoId) {
-                renderSearchResults([{
-                    videoId: directVideoId,
-                    title: `Direct Track (${directVideoId})`,
-                    artist: "Pasted YouTube Link",
-                    thumbnail: `https://i.ytimg.com/vi/${directVideoId}/hqdefault.jpg`
-                }]);
-                return;
-            }
-
-            resultsContainer.innerHTML = `
-                <div class="text-center text-brand-400 mt-10">
-                    <i class="fa-solid fa-circle-notch fa-spin text-3xl"></i>
-                    <p class="text-xs text-gray-400 mt-3">Searching music providers...</p>
-                </div>`;
-            
-            const encodedQuery = encodeURIComponent(cleanQuery);
-            let normalizedResults = null;
-
-            // TIER 1: Piped API Fallback Loop
-            for (const instance of PIPED_INSTANCES) {
-                try {
-                    const res = await fetchWithTimeout(`${instance}/search?q=${encodedQuery}&filter=music_songs`, {}, 3500);
-                    if (!res.ok) continue;
-                    const data = await res.json();
-                    
-                    if (data && data.items && Array.isArray(data.items)) {
-                        const streams = data.items.filter(i => i.type === 'stream');
-                        if (streams.length > 0) {
-                            normalizedResults = streams.map(item => {
-                                const vId = item.url ? item.url.replace('/watch?v=', '') : '';
-                                return {
-                                    videoId: vId,
-                                    title: item.title || 'Unknown Title',
-                                    artist: item.uploaderName || 'Unknown Artist',
-                                    thumbnail: item.thumbnail || `https://i.ytimg.com/vi/${vId}/hqdefault.jpg`
-                                };
-                            }).filter(item => item.videoId);
-
-                            if (normalizedResults.length > 0) break;
-                        }
-                    }
-                } catch (err) {
-                    console.warn(`Piped Tier 1 failed (${instance}):`, err.message);
-                }
-            }
-
-            // TIER 2: Invidious API Fallback Loop
-            if (!normalizedResults || normalizedResults.length === 0) {
-                for (const instance of INVIDIOUS_INSTANCES) {
-                    try {
-                        const res = await fetchWithTimeout(`${instance}/api/v1/search?q=${encodedQuery}&type=video`, {}, 3500);
-                        if (!res.ok) continue;
-                        const data = await res.json();
-                        
-                        if (Array.isArray(data) && data.length > 0) {
-                            const videos = data.filter(i => i.type === 'video' || i.videoId);
-                            if (videos.length > 0) {
-                                normalizedResults = videos.map(item => {
-                                    let thumb = `https://i.ytimg.com/vi/${item.videoId}/hqdefault.jpg`;
-                                    if (item.videoThumbnails && item.videoThumbnails.length > 0) {
-                                        thumb = item.videoThumbnails[0].url;
-                                    }
-                                    return {
-                                        videoId: item.videoId,
-                                        title: item.title || 'Unknown Title',
-                                        artist: item.author || item.uploaderName || 'Unknown Artist',
-                                        thumbnail: thumb
-                                    };
-                                }).filter(item => item.videoId);
-
-                                if (normalizedResults.length > 0) break;
-                            }
-                        }
-                    } catch (err) {
-                        console.warn(`Invidious Tier 2 failed (${instance}):`, err.message);
-                    }
-                }
-            }
-
-            // TIER 3: HTML DOM Parsing Fallback
-            if (!normalizedResults || normalizedResults.length === 0) {
-                normalizedResults = await searchInvidiousHTML(cleanQuery);
-            }
-
-            // TIER 4: YouTube Auto-Suggest & Link Helper
-            if (!normalizedResults || normalizedResults.length === 0) {
-                const suggestions = await fetchYouTubeSuggestions(cleanQuery);
-                renderTier3Fallback(cleanQuery, suggestions);
-                return;
-            }
-
-            // Render Normalized Results
-            renderSearchResults(normalizedResults);
-        }
-
-        // Render Normalized Results List
-        function renderSearchResults(results) {
-            const resultsContainer = document.getElementById('guest-search-results');
-            const items = results.slice(0, 15);
-            
-            resultsContainer.innerHTML = items.map(item => `
-                <div class="flex items-center gap-3 p-3 bg-gray-900 rounded-xl border border-gray-800">
-                    <img src="${item.thumbnail}" class="w-16 h-16 rounded-lg object-cover bg-gray-800" onerror="this.src='https://via.placeholder.com/100?text=No+Thumb'">
-                    <div class="flex-1 min-w-0">
-                        <p class="text-sm font-bold text-white truncate">${escapeHtml(item.title)}</p>
-                        <p class="text-xs text-gray-400 truncate">${escapeHtml(item.artist)}</p>
-                    </div>
-                    <button data-videoid="${item.videoId}" 
-                            data-title="${escapeHtml(item.title)}" 
-                            data-artist="${escapeHtml(item.artist)}" 
-                            data-thumb="${item.thumbnail}"
-                            onclick="handleQueueClick(this)"
-                            class="bg-gray-800 hover:bg-brand-600 text-brand-400 hover:text-white transition p-3 rounded-full flex-shrink-0">
-                        <i class="fa-solid fa-plus"></i>
-                    </button>
-                </div>
-            `).join('');
-        }
-
-        // Render Tier 4 UI when proxy APIs are offline
-        function renderTier3Fallback(query, suggestions) {
-            const resultsContainer = document.getElementById('guest-search-results');
-            
-            let suggestionHtml = '';
-            if (suggestions.length > 0) {
-                suggestionHtml = `
-                    <p class="text-xs text-gray-400 font-semibold mb-2">Search Suggestions (tap to retry):</p>
-                    <div class="flex flex-wrap gap-2 mb-4">
-                        ${suggestions.slice(0, 6).map(s => `
-                            <button onclick="document.getElementById('search-input').value=\`${escapeHtml(s)}\`; performSearch(\`${escapeHtml(s)}\`);" 
-                                    class="bg-gray-900 hover:bg-gray-800 border border-gray-700 text-xs text-gray-300 px-3 py-1.5 rounded-full transition">
-                                ${escapeHtml(s)}
-                            </button>
-                        `).join('')}
-                    </div>`;
-            }
-
-            resultsContainer.innerHTML = `
-                <div class="p-4 bg-gray-900/80 border border-amber-500/30 rounded-2xl">
-                    <div class="flex items-center gap-2 text-amber-400 text-sm font-bold mb-2">
-                        <i class="fa-solid fa-triangle-exclamation"></i>
-                        <span>Public Search APIs Throttled</span>
-                    </div>
-                    <p class="text-xs text-gray-400 mb-4">Use the paste button or paste a direct YouTube link into the input box above to add any track instantly.</p>
-                    ${suggestionHtml}
-                </div>`;
-        }
-
-        // Handles clicks safely from data attributes
-        window.handleQueueClick = function(btn) {
-            const videoId = btn.dataset.videoid;
-            const title = btn.dataset.title;
-            const artist = btn.dataset.artist;
-            const thumbnail = btn.dataset.thumb;
-            
-            addToQueue(videoId, title, artist, thumbnail);
-        };
-
-        window.addToQueue = function(videoId, title, artist, thumbnail) {
-            if (hostConnection && hostConnection.open) {
-                hostConnection.send({
-                    type: 'ADD_QUEUE',
-                    track: { videoId, title, artist, thumbnail }
-                });
-                
-                const searchInput = document.getElementById('search-input');
-                const origPlaceholder = searchInput.placeholder;
-                searchInput.value = "";
-                searchInput.placeholder = "Added to Queue!";
-                setTimeout(() => searchInput.placeholder = origPlaceholder, 2000);
-            } else {
-                alert("Not connected to Car System.");
-            }
-        };
     </script>
 </body>
 </html>
