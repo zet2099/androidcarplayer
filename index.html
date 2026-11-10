@@ -30,10 +30,12 @@
         .glass-panel { background: rgba(31, 41, 55, 0.7); backdrop-filter: blur(12px); border: 1px solid rgba(255,255,255,0.1); }
         .hide-scroll::-webkit-scrollbar { display: none; }
         .hide-scroll { -ms-overflow-style: none; scrollbar-width: none; }
-        /* Hidden YT Player for Host optimization */
+        /* Hidden YT Player for Host CPU/RAM optimization */
         #yt-player-container { position: absolute; top: -9999px; left: -9999px; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
         @keyframes pulse-slow { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
         .blink { animation: pulse-slow 2s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
+        @keyframes bounce-once { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-8px); } }
+        .animate-bounce-once { animation: bounce-once 0.4s ease-out 1; }
     </style>
 </head>
 <body class="h-screen w-screen flex flex-col">
@@ -137,15 +139,22 @@
             </div>
         </div>
 
-        <!-- Search & Direct Link Input Area -->
+        <!-- Search & Clipboard Toolbar -->
         <div class="p-4 flex-shrink-0 space-y-3">
-            <!-- Mode Selector Tabs -->
-            <div class="flex bg-gray-900 p-1 rounded-xl border border-gray-800 text-xs font-semibold">
-                <button type="button" id="tab-search-btn" onclick="switchGuestSearchTab('search')" class="flex-1 py-2 rounded-lg bg-brand-600 text-white transition">
-                    <i class="fa-solid fa-magnifying-glass mr-1"></i> Search
-                </button>
-                <button type="button" id="tab-link-btn" onclick="switchGuestSearchTab('link')" class="flex-1 py-2 rounded-lg text-gray-400 hover:text-white transition">
-                    <i class="fa-solid fa-link mr-1"></i> Paste Link
+            <div class="flex items-center gap-2">
+                <div class="flex-1 flex bg-gray-900 p-1 rounded-xl border border-gray-800 text-xs font-semibold">
+                    <button type="button" id="tab-search-btn" onclick="switchGuestSearchTab('search')" class="flex-1 py-2 rounded-lg bg-brand-600 text-white transition">
+                        <i class="fa-solid fa-magnifying-glass mr-1"></i> Search
+                    </button>
+                    <button type="button" id="tab-link-btn" onclick="switchGuestSearchTab('link')" class="flex-1 py-2 rounded-lg text-gray-400 hover:text-white transition">
+                        <i class="fa-solid fa-link mr-1"></i> Paste Link
+                    </button>
+                </div>
+                <!-- Manual Clipboard Paste Button -->
+                <button type="button" onclick="checkClipboardForYouTubeLink(true)" 
+                        title="Paste from Clipboard"
+                        class="bg-gray-900 hover:bg-gray-800 border border-gray-700 text-brand-400 p-2.5 rounded-xl transition flex items-center justify-center">
+                    <i class="fa-solid fa-paste text-sm"></i>
                 </button>
             </div>
 
@@ -158,6 +167,27 @@
                     <i class="fa-solid fa-arrow-right"></i>
                 </button>
             </form>
+        </div>
+
+        <!-- Floating Auto-Clipboard Toast Notification -->
+        <div id="clipboard-toast" class="hidden fixed bottom-6 left-4 right-4 z-50 glass-panel p-4 rounded-2xl border border-brand-500/50 shadow-2xl flex items-center justify-between gap-3 animate-bounce-once">
+            <div class="flex items-center gap-3 min-w-0">
+                <div class="bg-brand-600/20 text-brand-400 p-2.5 rounded-xl">
+                    <i class="fa-brands fa-youtube text-xl"></i>
+                </div>
+                <div class="min-w-0">
+                    <p class="text-xs text-brand-400 font-bold uppercase tracking-wider">YouTube Link Detected</p>
+                    <p class="text-xs text-white truncate font-mono" id="toast-track-title">...</p>
+                </div>
+            </div>
+            <div class="flex items-center gap-2 flex-shrink-0">
+                <button id="toast-add-btn" class="bg-brand-600 hover:bg-brand-500 text-white text-xs font-bold px-3 py-2 rounded-lg transition shadow-md">
+                    Add to Queue
+                </button>
+                <button onclick="dismissClipboardToast()" class="text-gray-400 hover:text-white px-2 py-1 text-sm">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+            </div>
         </div>
 
         <!-- Search Results List -->
@@ -188,8 +218,9 @@
         let ytPlayer = null;
         let progressInterval = null;
         let currentSearchMode = 'search';
+        let lastDetectedClipboardId = null;
 
-        // Tier 1: Active Piped Instances
+        // Tier 1: Piped JSON API Instances
         const PIPED_INSTANCES = [
             'https://pipedapi.tokhmi.xyz',
             'https://pipedapi.moomoo.me',
@@ -198,11 +229,19 @@
             'https://pipedapi.kavin.rocks'
         ];
 
-        // Tier 2: Active Invidious Instances
+        // Tier 2: Invidious JSON API Instances
         const INVIDIOUS_INSTANCES = [
             'https://inv.tux.pizza',
             'https://invidious.nerdvpn.de',
             'https://vid.puffyan.us'
+        ];
+
+        // Tier 3: Invidious Web HTML Mirrors (Scraping via DOMParser)
+        const INVIDIOUS_WEB_MIRRORS = [
+            'https://inv.tux.pizza',
+            'https://invidious.nerdvpn.de',
+            'https://vid.puffyan.us',
+            'https://invidious.drgns.space'
         ];
 
         // Helper: Fetch with Timeout
@@ -458,6 +497,7 @@
                 
                 hostConnection.on('open', () => {
                     console.log("Connected to Host!");
+                    checkClipboardForYouTubeLink(false); // Check clipboard on initial load
                 });
                 
                 hostConnection.on('data', (data) => {
@@ -514,7 +554,117 @@
             }
         };
 
-        // Tier 3: YouTube Auto-Suggest JSONP Fetch
+        // METHOD 1: HTML DOM Parsing via Invidious Web Mirrors
+        async function searchInvidiousHTML(query) {
+            const encodedQuery = encodeURIComponent(query);
+            
+            for (const mirror of INVIDIOUS_WEB_MIRRORS) {
+                try {
+                    const res = await fetchWithTimeout(`${mirror}/search?q=${encodedQuery}`, {}, 4000);
+                    if (!res.ok) continue;
+                    
+                    const htmlText = await res.text();
+                    const parser = new DOMParser();
+                    const doc = parser.parseFromString(htmlText, 'text/html');
+                    
+                    const cards = doc.querySelectorAll('.video-card-row, .pure-u-1-1.pure-u-md-1-4, .video-card');
+                    const results = [];
+                    const seenIds = new Set();
+
+                    cards.forEach(card => {
+                        const linkEl = card.querySelector('a[href*="/watch?v="]');
+                        if (!linkEl) return;
+
+                        const href = linkEl.getAttribute('href') || '';
+                        const videoIdMatch = href.match(/\/watch\?v=([a-zA-Z0-9_-]{11})/);
+                        if (!videoIdMatch) return;
+                        const videoId = videoIdMatch[1];
+
+                        if (seenIds.has(videoId)) return;
+                        seenIds.add(videoId);
+
+                        const titleEl = card.querySelector('p[dir="auto"], h5, .video-card-title, a[href*="/watch?v="] p');
+                        const title = titleEl ? titleEl.textContent.trim() : (linkEl.getAttribute('title') || `Track (${videoId})`);
+
+                        const channelEl = card.querySelector('a[href*="/channel/"], a[href*="/user/"], .channel-name');
+                        const artist = channelEl ? channelEl.textContent.trim() : 'YouTube Channel';
+
+                        const imgEl = card.querySelector('img');
+                        let thumbnail = `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`;
+                        if (imgEl && imgEl.getAttribute('src')) {
+                            const src = imgEl.getAttribute('src');
+                            if (src.startsWith('http')) thumbnail = src;
+                            else if (src.startsWith('/')) thumbnail = mirror + src;
+                        }
+
+                        results.push({ videoId, title, artist, thumbnail });
+                    });
+
+                    if (results.length > 0) return results;
+
+                } catch (err) {
+                    console.warn(`HTML DOM Scrape failed for ${mirror}:`, err.message);
+                }
+            }
+            return null;
+        }
+
+        // METHOD 2: Auto-Clipboard Link Detection Logic
+        async function checkClipboardForYouTubeLink(manualTrigger = false) {
+            if (isHost || !navigator.clipboard || !navigator.clipboard.readText) {
+                if (manualTrigger) alert("Clipboard access is restricted or not supported by your browser.");
+                return;
+            }
+
+            try {
+                const text = await navigator.clipboard.readText();
+                const videoId = parseYouTubeVideoId(text);
+                
+                if (videoId && videoId !== lastDetectedClipboardId) {
+                    showClipboardToast(videoId, text);
+                } else if (manualTrigger && !videoId) {
+                    alert("No valid YouTube video URL found in clipboard.");
+                }
+            } catch (err) {
+                if (manualTrigger) {
+                    alert("Unable to read clipboard. Please grant permission when prompted.");
+                }
+            }
+        }
+
+        function showClipboardToast(videoId, fullUrl) {
+            lastDetectedClipboardId = videoId;
+            const toast = document.getElementById('clipboard-toast');
+            const toastTitle = document.getElementById('toast-track-title');
+            const confirmBtn = document.getElementById('toast-add-btn');
+
+            toastTitle.innerText = `Track ID: ${videoId}`;
+            toast.classList.remove('hidden');
+
+            confirmBtn.onclick = () => {
+                addToQueue(videoId, `Track (${videoId})`, "Clipboard Import", `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`);
+                toast.classList.add('hidden');
+            };
+        }
+
+        function dismissClipboardToast() {
+            document.getElementById('clipboard-toast').classList.add('hidden');
+        }
+
+        // Register Clipboard Listeners
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'visible' && !isHost) {
+                checkClipboardForYouTubeLink(false);
+            }
+        });
+
+        window.addEventListener('focus', () => {
+            if (!isHost) {
+                checkClipboardForYouTubeLink(false);
+            }
+        });
+
+        // Tier 4: YouTube Auto-Suggest JSONP Fetch
         function fetchYouTubeSuggestions(query) {
             return new Promise((resolve) => {
                 const callbackName = 'yt_suggest_' + Math.random().toString(36).substring(2, 9);
@@ -537,7 +687,7 @@
             });
         }
 
-        // 3-TIER HYBRID SEARCH ENGINE EXECUTION
+        // 4-TIER HYBRID SEARCH ENGINE EXECUTION
         async function performSearch(query) {
             const resultsContainer = document.getElementById('guest-search-results');
             const cleanQuery = query.trim();
@@ -624,14 +774,19 @@
                 }
             }
 
-            // TIER 3: Direct YouTube Auto-Suggest & Link Helper (Zero-Server Fail-Safe)
+            // TIER 3: HTML DOM Parsing Fallback
+            if (!normalizedResults || normalizedResults.length === 0) {
+                normalizedResults = await searchInvidiousHTML(cleanQuery);
+            }
+
+            // TIER 4: YouTube Auto-Suggest & Link Helper
             if (!normalizedResults || normalizedResults.length === 0) {
                 const suggestions = await fetchYouTubeSuggestions(cleanQuery);
                 renderTier3Fallback(cleanQuery, suggestions);
                 return;
             }
 
-            // Render Results from Tier 1 or Tier 2
+            // Render Normalized Results
             renderSearchResults(normalizedResults);
         }
 
@@ -659,7 +814,7 @@
             `).join('');
         }
 
-        // Render Tier 3 UI when proxy APIs are offline
+        // Render Tier 4 UI when proxy APIs are offline
         function renderTier3Fallback(query, suggestions) {
             const resultsContainer = document.getElementById('guest-search-results');
             
@@ -683,7 +838,7 @@
                         <i class="fa-solid fa-triangle-exclamation"></i>
                         <span>Public Search APIs Throttled</span>
                     </div>
-                    <p class="text-xs text-gray-400 mb-4">You can paste a direct YouTube link into the input box above to add any track instantly.</p>
+                    <p class="text-xs text-gray-400 mb-4">Use the paste button or paste a direct YouTube link into the input box above to add any track instantly.</p>
                     ${suggestionHtml}
                 </div>`;
         }
